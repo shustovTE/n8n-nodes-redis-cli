@@ -85,6 +85,10 @@ export class RedisCli implements INodeType {
 				
 				const commandString = this.getNodeParameter('command', itemIndex) as string;
 				
+				// Dynamically import the ESM package 'string-argv'
+				const stringArgvModule = await import('string-argv');
+				const parseArgsStringToArgv = stringArgvModule.parseArgsStringToArgv || stringArgvModule.default;
+				
 				// Надёжный парсинг команды с поддержкой экранированных символов и вложенных кавычек
 				const args = parseArgsStringToArgv(commandString);
 
