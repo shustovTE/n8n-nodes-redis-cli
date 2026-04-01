@@ -6,7 +6,6 @@ import {
 	NodeOperationError,
 } from 'n8n-workflow';
 import { createClient } from 'redis';
-import { parseArgsStringToArgv } from 'string-argv';
 
 export class RedisCli implements INodeType {
 	description: INodeTypeDescription = {
