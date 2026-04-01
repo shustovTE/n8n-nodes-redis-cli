@@ -6,6 +6,7 @@ import {
 	NodeOperationError,
 } from 'n8n-workflow';
 import { createClient } from 'redis';
+import { parseArgsStringToArgv } from 'string-argv';
 
 export class RedisCli implements INodeType {
 	description: INodeTypeDescription = {
@@ -69,20 +70,24 @@ export class RedisCli implements INodeType {
 		});
 
 		// 3. Connect to Redis
-		await client.connect();
+		try {
+    		await client.connect();
+		} catch (error) {
+    		throw new NodeOperationError(this.getNode(), `Error when connecting to Redis: ${error.message}`);
+		}
 
 		// 4. Iterate over input items and execute commands
 		for (let itemIndex = 0; itemIndex < items.length; itemIndex++) {
 			try {
-				const commandString = this.getNodeParameter('command', itemIndex) as string;
-
-				// Parse the command string into an array of arguments.
-				// This regex splits by spaces but preserves strings enclosed in double or single quotes.
-				const argsRegex = /(?:[^\s"']+|"[^"]*"|'[^']*')+/g;
-				const rawArgs = commandString.match(argsRegex) || [];
+				// Проверяем, не оборвалось ли соединение, и восстанавливаем его, если нужно
+				if (!client.isOpen) {
+				    await client.connect();
+				}
 				
-				// Strip the surrounding quotes from the parsed arguments
-				const args = rawArgs.map(arg => arg.replace(/^['"]|['"]$/g, ''));
+				const commandString = this.getNodeParameter('command', itemIndex) as string;
+				
+				// Надёжный парсинг команды с поддержкой экранированных символов и вложенных кавычек
+				const args = parseArgsStringToArgv(commandString);
 
 				if (args.length === 0) {
 					throw new NodeOperationError(this.getNode(), 'Command cannot be empty', { itemIndex });
