@@ -75,20 +75,26 @@ export class RedisCli implements INodeType {
     		throw new NodeOperationError(this.getNode(), `Error when connecting to Redis: ${error.message}`);
 		}
 
+		// Dynamically import the ESM package 'string-argv'
+		const stringArgvModule = await import('string-argv');
+		const parseArgsStringToArgv = stringArgvModule.parseArgsStringToArgv || stringArgvModule.default;
 		// 4. Iterate over input items and execute commands
 		for (let itemIndex = 0; itemIndex < items.length; itemIndex++) {
 			try {
 				// Проверяем, не оборвалось ли соединение, и восстанавливаем его, если нужно
 				if (!client.isOpen) {
-				    await client.connect();
+				    try {
+				        await client.connect();
+				    } catch (reconnectError) {
+				        throw new NodeOperationError(
+				            this.getNode(), 
+				            `Error when reconnecting to Redis: ${reconnectError.message}`, 
+				            { itemIndex }
+				        );
+				    }
 				}
 				
 				const commandString = this.getNodeParameter('command', itemIndex) as string;
-				
-				// Dynamically import the ESM package 'string-argv'
-				const stringArgvModule = await import('string-argv');
-				const parseArgsStringToArgv = stringArgvModule.parseArgsStringToArgv || stringArgvModule.default;
-				
 				// Надёжный парсинг команды с поддержкой экранированных символов и вложенных кавычек
 				const args = parseArgsStringToArgv(commandString);
 
@@ -121,7 +127,13 @@ export class RedisCli implements INodeType {
 					});
 					continue;
 				}
-				await client.quit();
+				if (client.isOpen) {
+				    try {
+				        await client.quit();
+				    } catch (cleanupError) {
+				        // Silently ignore cleanup errors to ensure the original error is thrown
+				    }
+				}
 				throw new NodeOperationError(this.getNode(), error, { itemIndex });
 			}
 		}
