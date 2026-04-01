@@ -1,6 +1,6 @@
 {
 	"name": "n8n-nodes-redis-cli",
-	"version": "0.1.3",
+	"version": "0.1.4",
 	"description": "An n8n node to execute raw Redis CLI commands",
 	"license": "MIT",
 	"homepage": "https://github.com/shustovTE",
