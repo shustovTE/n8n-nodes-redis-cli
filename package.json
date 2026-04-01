@@ -3,7 +3,7 @@
 	"version": "0.1.0",
 	"description": "An n8n node to execute raw Redis CLI commands",
 	"license": "MIT",
-	"homepage": "",
+	"homepage": "https://github.com/shustovTE",
 	"keywords": [
 		"n8n-community-node-package",
 		"redis",
@@ -12,10 +12,6 @@
 	"author": {
 		"name": "Timofei Shustov",
 		"email": "msshustova@gmail.com"
-	},
-	"repository": {
-		"type": "git",
-		"url": "https://github.com/<...>/n8n-nodes-redis-cli.git"
 	},
 	"scripts": {
 		"build": "n8n-node build",
