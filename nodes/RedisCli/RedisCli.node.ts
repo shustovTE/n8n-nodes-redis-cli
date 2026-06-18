@@ -1,27 +1,58 @@
 import {
+	IDataObject,
 	IExecuteFunctions,
 	INodeExecutionData,
 	INodeType,
 	INodeTypeDescription,
+	NodeConnectionTypes,
 	NodeOperationError,
 } from 'n8n-workflow';
 import { createClient } from 'redis';
+
+/**
+ * `string-argv` is published as an ES module, so it has to be imported
+ * dynamically from this CommonJS node. Resolve it once and cache the promise so
+ * the import cost is not paid again on every execution.
+ */
+type ArgvParser = (value: string) => string[];
+let argvParserPromise: Promise<ArgvParser> | undefined;
+
+function getArgvParser(): Promise<ArgvParser> {
+	if (!argvParserPromise) {
+		argvParserPromise = import('string-argv').then(
+			(mod) => (mod.parseArgsStringToArgv ?? mod.default) as ArgvParser,
+		);
+	}
+	return argvParserPromise;
+}
+
+/** Extract a readable message from any thrown value, without assuming it is an Error. */
+function getErrorMessage(error: unknown): string {
+	if (error instanceof Error) return error.message;
+	if (typeof error === 'string') return error;
+	try {
+		return JSON.stringify(error);
+	} catch {
+		return String(error);
+	}
+}
 
 export class RedisCli implements INodeType {
 	description: INodeTypeDescription = {
 		displayName: 'Redis CLI',
 		name: 'redisCli',
-		// You can use the standard redis icon if available, or a generic one
 		icon: 'file:redis.svg',
 		group: ['transform'],
 		version: 1,
+		subtitle: '={{ $parameter["command"] }}',
 		description: 'Execute arbitrary Redis CLI commands',
+		usableAsTool: true,
 		defaults: {
 			name: 'Redis CLI',
 		},
-		inputs: ['main'],
-		outputs: ['main'],
-		// We reuse the standard n8n Redis credentials here!
+		inputs: [NodeConnectionTypes.Main],
+		outputs: [NodeConnectionTypes.Main],
+		// Reuse n8n's built-in Redis credentials.
 		credentials: [
 			{
 				name: 'redis',
@@ -38,6 +69,24 @@ export class RedisCli implements INodeType {
 				required: true,
 				description: 'The raw Redis CLI command to execute',
 			},
+			{
+				displayName: 'Options',
+				name: 'options',
+				type: 'collection',
+				placeholder: 'Add option',
+				default: {},
+				options: [
+					{
+						displayName: 'Connection Timeout',
+						name: 'connectTimeout',
+						type: 'number',
+						default: 10000,
+						typeOptions: { minValue: 0 },
+						description:
+							'How long to wait (in milliseconds) while establishing the connection before failing. Prevents the workflow from hanging on an unreachable server.',
+					},
+				],
+			},
 		],
 	};
 
@@ -45,100 +94,108 @@ export class RedisCli implements INodeType {
 		const items = this.getInputData();
 		const returnData: INodeExecutionData[] = [];
 
-		// 1. Fetch the default Redis credentials from n8n
 		const credentials = await this.getCredentials('redis');
+		const options = this.getNodeParameter('options', 0, {}) as {
+			connectTimeout?: number;
+		};
+		const connectTimeout = options.connectTimeout ?? 10000;
 
-		// 2. Configure the Redis client based on the credentials
-		const socketConfig =
-			credentials.ssl === true
-				? {
-						host: credentials.host as string,
-						port: credentials.port as number,
-						tls: true as const,
-				  }
-				: {
-						host: credentials.host as string,
-						port: credentials.port as number,
-				  };
-
+		const useTls = credentials.ssl === true;
 		const client = createClient({
-			socket: socketConfig,
+			socket: {
+				host: credentials.host as string,
+				port: credentials.port as number,
+				connectTimeout,
+				// Fail fast with the real error instead of silently retrying (which
+				// would multiply the wait and mask the cause). Drops between commands
+				// are recovered explicitly in the loop below.
+				reconnectStrategy: false,
+				...(useTls ? { tls: true as const } : {}),
+			},
 			database: credentials.database as number,
 			username: (credentials.user as string) || undefined,
 			password: (credentials.password as string) || undefined,
+			// Fail commands immediately when the connection is down instead of
+			// silently queueing them.
+			disableOfflineQueue: true,
 		});
 
-		// 3. Connect to Redis
+		// A Redis client is an EventEmitter; an unhandled 'error' event would crash
+		// the whole n8n process. Absorb the event and keep the latest error so it can
+		// be reported with a meaningful message (the awaited calls sometimes only
+		// reject with a generic "client is closed").
+		let lastClientError: unknown;
+		client.on('error', (error) => {
+			lastClientError = error;
+		});
+
+		const parseArgv = await getArgvParser();
+
 		try {
-    		await client.connect();
-		} catch (error) {
-    		throw new NodeOperationError(this.getNode(), `Error when connecting to Redis: ${error.message}`);
-		}
-
-		// Dynamically import the ESM package 'string-argv'
-		const stringArgvModule = await import('string-argv');
-		const parseArgsStringToArgv = stringArgvModule.parseArgsStringToArgv || stringArgvModule.default;
-		// 4. Iterate over input items and execute commands
-		for (let itemIndex = 0; itemIndex < items.length; itemIndex++) {
 			try {
-				// Проверяем, не оборвалось ли соединение, и восстанавливаем его, если нужно
-				if (!client.isOpen) {
-				    try {
-				        await client.connect();
-				    } catch (reconnectError) {
-				        throw new NodeOperationError(
-				            this.getNode(), 
-				            `Error when reconnecting to Redis: ${reconnectError.message}`, 
-				            { itemIndex }
-				        );
-				    }
-				}
-				
-				const commandString = this.getNodeParameter('command', itemIndex) as string;
-				// Надёжный парсинг команды с поддержкой экранированных символов и вложенных кавычек
-				const args = parseArgsStringToArgv(commandString);
-
-				if (args.length === 0) {
-					throw new NodeOperationError(this.getNode(), 'Command cannot be empty', { itemIndex });
-				}
-
-				// Execute the raw command using the redis library's sendCommand method
-				const result = await client.sendCommand(args);
-
-				returnData.push({
-					json: {
-						command: commandString,
-						result: result,
-					},
-					pairedItem: {
-						item: itemIndex,
-					},
-				});
-
+				await client.connect();
 			} catch (error) {
-				if (this.continueOnFail()) {
+				throw new NodeOperationError(
+					this.getNode(),
+					`Could not connect to Redis: ${getErrorMessage(lastClientError ?? error)}`,
+				);
+			}
+
+			for (let itemIndex = 0; itemIndex < items.length; itemIndex++) {
+				let commandString = '';
+				try {
+					// Re-establish the connection if it dropped between items.
+					if (!client.isOpen) {
+						await client.connect();
+					}
+
+					commandString = this.getNodeParameter('command', itemIndex) as string;
+					// Parse the command into arguments, honouring quoted segments.
+					const args = parseArgv(commandString);
+
+					if (args.length === 0) {
+						throw new NodeOperationError(this.getNode(), 'Command cannot be empty', {
+							itemIndex,
+						});
+					}
+
+					const result = await client.sendCommand(args);
+
 					returnData.push({
-						json: {
-							error: error.message,
-						},
-						pairedItem: {
-							item: itemIndex,
-						},
+						json: { command: commandString, result } as IDataObject,
+						pairedItem: { item: itemIndex },
 					});
-					continue;
+				} catch (error) {
+					if (this.continueOnFail()) {
+						returnData.push({
+							json: { command: commandString, error: getErrorMessage(error) },
+							pairedItem: { item: itemIndex },
+						});
+						continue;
+					}
+					throw error instanceof NodeOperationError
+						? error
+						: new NodeOperationError(this.getNode(), getErrorMessage(error), { itemIndex });
 				}
-				if (client.isOpen) {
-				    try {
-				        await client.quit();
-				    } catch (cleanupError) {
-				        // Silently ignore cleanup errors to ensure the original error is thrown
-				    }
+			}
+		} finally {
+			// Always release the connection, even on error, but only when something
+			// is actually open: calling destroy() on an already-closed client throws.
+			// quit() drains pending replies gracefully; destroy() forces a broken
+			// socket down. Cleanup must never throw and mask the original error.
+			if (client.isOpen) {
+				try {
+					await client.quit();
+				} catch {
+					try {
+						client.destroy();
+					} catch {
+						// Socket already gone — nothing left to clean up.
+					}
 				}
-				throw new NodeOperationError(this.getNode(), error, { itemIndex });
 			}
 		}
 
-		await client.quit();
 		return [returnData];
 	}
 }
