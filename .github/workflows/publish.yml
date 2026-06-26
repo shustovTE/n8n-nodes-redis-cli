@@ -49,21 +49,23 @@ jobs:
       contents: read
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 'lts/*'
-          # Writes an .npmrc that authenticates with the NODE_AUTH_TOKEN env var.
-          registry-url: 'https://registry.npmjs.org'
 
       - name: Install dependencies
         run: npm install
 
       - name: Release
         # In CI, `npm run release` runs lint + build, then `npm publish` with
-        # provenance. NODE_AUTH_TOKEN is read from the .npmrc set up above.
-        run: npm run release
+        # provenance. We write the token straight to .npmrc instead of using
+        # setup-node's `registry-url`, which avoids the deprecated `always-auth`
+        # key that newer npm warns about.
+        run: |
+          npm config set //registry.npmjs.org/:_authToken "${NODE_AUTH_TOKEN}"
+          npm run release
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
