@@ -1,17 +1,28 @@
 {
 	"name": "n8n-nodes-redis-cli",
-	"version": "0.1.5",
+	"version": "0.2.0",
 	"description": "An n8n node to execute raw Redis CLI commands",
 	"license": "MIT",
-	"homepage": "https://github.com/shustovTE",
+	"homepage": "https://github.com/shustovTE/n8n-nodes-redis-cli#readme",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/shustovTE/n8n-nodes-redis-cli.git"
+	},
+	"bugs": {
+		"url": "https://github.com/shustovTE/n8n-nodes-redis-cli/issues"
+	},
 	"keywords": [
 		"n8n-community-node-package",
 		"redis",
+		"redis-cli",
 		"cli"
 	],
 	"author": {
 		"name": "Timofei Shustov",
 		"email": "msshustova@gmail.com"
+	},
+	"engines": {
+		"node": ">=18.19.0"
 	},
 	"scripts": {
 		"build": "n8n-node build",
@@ -27,7 +38,7 @@
 	],
 	"n8n": {
 		"n8nNodesApiVersion": 1,
-		"strict": true,
+		"strict": false,
 		"credentials": [],
 		"nodes": [
 			"dist/nodes/RedisCli/RedisCli.node.js"
@@ -39,7 +50,7 @@
 	},
 	"devDependencies": {
 		"@n8n/node-cli": "*",
-		"eslint": "10.1.0",
+		"eslint": "9.29.0",
 		"prettier": "3.8.1",
 		"release-it": "19.2.4",
 		"typescript": "6.0.2"
