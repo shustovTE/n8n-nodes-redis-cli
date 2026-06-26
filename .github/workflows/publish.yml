@@ -1,0 +1,76 @@
+# Publishes this n8n community node to npm automatically on every version tag.
+#
+# After setup you never build or publish from your machine again: you only push
+# a version tag (locally with `npm run release`, or entirely from the GitHub UI
+# by bumping package.json and creating a Release). CI then lints, builds and
+# publishes with an npm provenance attestation.
+#
+# ─── ONE-TIME SETUP (pick ONE auth method) ──────────────────────────────────
+#
+# Option A — npm Automation Token (simplest, works on any npm version):
+#   1. npmjs.com → Access Tokens → Generate New Token → Granular Access Token.
+#      Give it "Read and write" access to the n8n-nodes-redis-cli package.
+#   2. GitHub repo → Settings → Secrets and variables → Actions → New repository
+#      secret → name it NPM_TOKEN and paste the token.
+#
+# Option B — OIDC Trusted Publishing (no stored secret, needs npm >= 11.5):
+#   1. npmjs.com → package settings → "Trusted Publishers" → Add GitHub Actions:
+#        Repository: shustovTE/n8n-nodes-redis-cli   Workflow: publish.yml
+#   2. Leave NPM_TOKEN unset. Uncomment the "Upgrade npm" step below so the
+#      runner has an npm new enough for the OIDC exchange.
+#
+# Provenance is signed by GitHub's OIDC regardless of which option you choose.
+#
+# ─── HOW TO RELEASE ─────────────────────────────────────────────────────────
+#
+#   Local (recommended):  npm run release   # bumps version, tags, pushes -> CI
+#   From GitHub only:      bump "version" in package.json, commit, then create a
+#                          Release whose tag matches that version (e.g. 0.2.1).
+#
+# npm publishes the version in package.json — the tag only triggers the run, so
+# the tag and package.json version must match, and must be higher than the last
+# published version.
+
+name: Publish
+
+on:
+  push:
+    tags:
+      # Matches 0.2.1, 1.0.0, 2.0.0-rc.1, etc. Use ['v*.*.*'] for a "v" prefix.
+      - '*.*.*'
+
+jobs:
+  publish:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+
+    permissions:
+      # Required to mint the OIDC token for the npm provenance attestation.
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+          registry-url: 'https://registry.npmjs.org'
+
+      # Uncomment for Option B (OIDC Trusted Publishing): npm >= 11.5 is required.
+      # - name: Upgrade npm
+      #   run: npm install -g npm@latest
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Release
+        # In CI, `npm run release` runs lint + build, then `npm publish` with
+        # provenance (NPM_CONFIG_PROVENANCE=true). With Option A the token below
+        # is written to .npmrc; with Option B it is empty and OIDC is used.
+        run: |
+          [ -n "$NPM_TOKEN" ] && npm config set //registry.npmjs.org/:_authToken "$NPM_TOKEN"
+          npm run release
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
