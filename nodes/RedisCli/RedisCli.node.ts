@@ -41,7 +41,7 @@ export class RedisCli implements INodeType {
 	description: INodeTypeDescription = {
 		displayName: 'Redis CLI',
 		name: 'redisCli',
-		icon: 'file:redis.svg',
+		icon: { light: 'file:redis.svg', dark: 'file:redis.dark.svg' },
 		group: ['transform'],
 		version: 1,
 		subtitle: '={{ $parameter["command"] }}',
