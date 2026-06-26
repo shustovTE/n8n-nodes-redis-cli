@@ -1,24 +1,23 @@
 # Publishes this n8n community node to npm automatically on every version tag,
-# using npm OIDC Trusted Publishing — no NPM_TOKEN secret is stored anywhere.
+# authenticating with an npm token stored as the NPM_TOKEN repository secret.
 #
 # After setup you never build or publish from your machine again: you only push
 # a version tag (locally with `npm run release`, or entirely from the GitHub UI
 # by bumping package.json and creating a Release). CI then lints, builds and
 # publishes with an npm provenance attestation.
 #
-# ─── ONE-TIME SETUP (Trusted Publishing) ────────────────────────────────────
+# ─── ONE-TIME SETUP (npm token) ─────────────────────────────────────────────
 #
-#   On npmjs.com → the n8n-nodes-redis-cli package → Settings →
-#   "Trusted Publishers" → Add publisher → GitHub Actions, and fill in:
-#       Organization or user: shustovTE
-#       Repository:           n8n-nodes-redis-cli
-#       Workflow filename:    publish.yml
-#       Environment:          (leave blank)
+#   1. Create the token on npmjs.com → Access Tokens → Generate New Token →
+#      "Granular Access Token":
+#        - Packages and scopes: Read and write, limited to n8n-nodes-redis-cli
+#        - Expiration: pick a date and set a reminder to rotate it
+#      (A classic "Automation" token works too.) Both token types are made for
+#      CI and skip the interactive 2FA one-time-password prompt, so 2FA on your
+#      account does not block this workflow.
 #
-#   That's it — no repository secret is needed. GitHub's OIDC token is exchanged
-#   for a short-lived npm credential at publish time. The repo, workflow name
-#   and `id-token: write` permission below must match the publisher config, or
-#   npm rejects the publish.
+#   2. Add it to GitHub: repo → Settings → Secrets and variables → Actions →
+#      New repository secret → name it exactly NPM_TOKEN and paste the value.
 #
 # ─── HOW TO RELEASE ─────────────────────────────────────────────────────────
 #
@@ -44,7 +43,8 @@ jobs:
     runs-on: ubuntu-latest
 
     permissions:
-      # Required to mint the OIDC token used for Trusted Publishing + provenance.
+      # Required to mint the OIDC token for the provenance attestation (the npm
+      # token below handles registry authentication; provenance is separate).
       id-token: write
       contents: read
 
@@ -55,17 +55,15 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 'lts/*'
+          # Writes an .npmrc that authenticates with the NODE_AUTH_TOKEN env var.
           registry-url: 'https://registry.npmjs.org'
-
-      - name: Upgrade npm
-        # OIDC Trusted Publishing requires npm >= 11.5; Node LTS still ships npm 10.
-        run: npm install -g npm@latest
 
       - name: Install dependencies
         run: npm install
 
       - name: Release
         # In CI, `npm run release` runs lint + build, then `npm publish` with
-        # provenance. No token: npm performs the OIDC exchange automatically
-        # because a Trusted Publisher is configured for this repo + workflow.
+        # provenance. NODE_AUTH_TOKEN is read from the .npmrc set up above.
         run: npm run release
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
